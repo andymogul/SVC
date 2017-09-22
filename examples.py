@@ -18,10 +18,10 @@ data_path='data/ring'
 input = load_data(data_path)
 print(input.shape)
 print("with data",data_path)
-support = "SVDD"
-hyperparams = {'ker': 'rbf', 'arg': 0.5, 'C': 0.5}
+support = "GP"
+#hyperparams = {'ker': 'rbf', 'arg': 0.5, 'C': 0.5}
 
-#hyperparams = [100*np.ones((input.shape[0],1)), 1, 10]
+hyperparams = [100*np.ones((input.shape[0],1)), 1, 10]
 st=time.time()
 model = supportmodel(input,support, hyperparams)
 et=time.time()
