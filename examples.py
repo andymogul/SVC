@@ -12,7 +12,7 @@ import sklearn.metrics.pairwise as kernels
 from scipy.linalg import inv
 from scipy.sparse import csgraph as cg
 from IPython import embed
-from SVC_young import *
+from SVC_init import *
 
 data_name='ring'
 input = load_data(data_name)
@@ -27,7 +27,8 @@ model = supportmodel(input,support, supportopt, hyperparams)
 et=time.time()
 print("Training time:", et-st)
 print("---------------------------------")
-labmodel = labeling(model,"CG-SC")
+options = {'R1' : 0.01, 'R2' : 0.01}
+labmodel = labeling(model,"F-MSC", options)
 labmodel.run() 
 et1=time.time()
 print("Labeling time:", et1-et)
