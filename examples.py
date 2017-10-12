@@ -14,23 +14,23 @@ from scipy.sparse import csgraph as cg
 from IPython import embed
 from SVC_init import *
 
-data_path='data/ring'
-input = load_data(data_path)
-print(input.shape)
-print("with data",data_path)
+data_name='ring'
+input = load_data(data_name)
+print(input)
+print("with data",data_name)
 support = "GP"
-#hyperparams = {'ker': 'rbf', 'arg': 0.5, 'C': 0.5}
+supportopt = {'ker': 'rbf', 'arg': 0.5, 'C': 0.5}
 
 hyperparams = [100*np.ones((input.shape[0],1)), 1, 10]
 st=time.time()
-model = supportmodel(input,support, hyperparams)
+model = supportmodel(input,support, supportopt, hyperparams)
 et=time.time()
 print("Training time:", et-st)
 print("---------------------------------")
-labmodel = labeling(model,"S-MSC")
-#labmodel.run() 
+options = {'R1' : 0.01, 'R2' : 0.01}
+labmodel = labeling(model,"F-MSC", options)
+labmodel.run() 
 et1=time.time()
 print("Labeling time:", et1-et)
 print("---------------------------------")
-print(labmodel.cluster_label)
 embed()

@@ -2,16 +2,23 @@ import numpy as np
 import time
 import scipy.io as sio
 import sklearn.metrics.pairwise as kernels
+import numpy.linalg as la
 from scipy.linalg import inv
 from scipy.sparse import csgraph as cg
 from IPython import embed
 from cvxopt import matrix
 from cvxopt import solvers
-from scipy.optimize import minimize
-
+from sklearn.metrics.pairwise import euclidean_distances
+from numpy import matlib as ml
+from scipy.optimize import *
 
 ##Structure
 """
+kradius
+kernel
+qpssvm
+diagker
+var_gpar
 load_data
 class support model
     __init__
@@ -19,25 +26,26 @@ class support model
     gp
     get_inv_C
     svdd_normalize
-    svdd(Son)
-    kernel(Son)
-    qpssvm(Son)
+    svdd
 class labeling
     __init__
     run
     findAdjMatrix
-    kradius
     cgsc
+    findSEPs
     smsc(Byun)
-    tmsc(?)
-    fmsc(?)
-    vmsc(?)
-    findSEPs(Byun)
-    findTPs(Byun)
-var_gpr
-my_R_GP
+    findTPs
+    hierarchicalLabelTSVC
+    tmsc
+    fmsc
+    vmsc
+my_R1 // f for minimize
+my_R2 // f, g, H
+my_R_GP1 // f for minimize
+my_R_GP2 // f, g, H
+fsolve_R
+fsolve_R_GP
 """
-
 
 
 def kradius(X, model):
@@ -55,9 +63,9 @@ def kradius(X, model):
     d = np.zeros([X.shape[1], 1])  ######################
     if model.support == 'SVDD':
         [dim, num_data] = X.shape
-        x2 = diagker(X, model.svdd_params['ker'], model.svdd_params['arg'])
-        Ksvx = kernel(input1=X, input2=model.svdd_model['sv']['X'], ker=model.svdd_params['ker'], arg=model.svdd_params['arg'])
-        d = x2 - 2 * np.dot(Ksvx, model.svdd_model['Alpha']) + model.svdd_model['b'] * np.ones((num_data, 1))
+        x2 = diagker(X, model['options']['ker'], model['options']['arg'])
+        Ksvx = kernel(input1=X, input2=model['sv']['X'], ker=model['options']['ker'], arg=model['options']['arg'])
+        d = x2 - 2 * np.dot(Ksvx, model['Alpha']) + model['b'] * np.ones((num_data, 1))
     else:  # 'GP'
         for i in range(X.shape[1]):
             # %[predict_label, accuracy] = var_gpr(X(:,i)', model.X, model.inv_C, model.hyperparams);
@@ -131,59 +139,54 @@ def diagker(X, ker, arg):
     return diagK
 
 
-def load_data(data_path):
-    data=sio.loadmat(data_path)
+def var_gpr(test, input, inv_C, hyperpara):
+    # % Variance in Gaussian Process Regression used as Support Funtion of Clustering
+    # %
+    # % The variance function of a predictive distribution of GPR
+    # % sigma^2(x) = kappa - k'C^(-1)k
+    # %==========================================================================
+    # % Implemented by H.C. Kim Jan. 16, 2006
+    # % Modified by Sujee Lee at September 10, 2014.
+    # %
+    # % * The source code is available under the GNU LESSER GENERAL PUBLIC
+    # % LICENSE, version 2.1.
+    # %==========================================================================
+    [D, n] = input.shape
+    [D, nn] = test.shape
+    expX = hyperpara
+    a = np.zeros([nn, n])
+
+    for d in range(D):
+        a = a + expX[0][d] * (np.tile(input[d, :], [nn, 1]) - np.tile(np.reshape(test[d, :], [-1, 1]), [1, n])) ** 2
+
+    a = expX[1] * np.exp(-0.5 * a)
+    b = expX[1]
+    mul = a.dot(inv_C.T)
+    dmul = np.multiply(a, mul)
+    s_a_inv_C_a = np.sum(dmul, axis=1)
+    var = b - s_a_inv_C_a
+
+    return var
+
+def load_data(data_name):
+    data=sio.loadmat('data/'+data_name)
     if data=='toy':
         input=data['X']
     else:
         input=data['input'].T
     return input
     
-def var_gpr(test, input, inv_C, hyperpara):
-#% Variance in Gaussian Process Regression used as Support Funtion of Clustering
-#%
-#% The variance function of a predictive distribution of GPR
-#% sigma^2(x) = kappa - k'C^(-1)k
-#%==========================================================================
-#% Implemented by H.C. Kim Jan. 16, 2006
-#% Modified by Sujee Lee at September 10, 2014.
-#%
-#% * The source code is available under the GNU LESSER GENERAL PUBLIC
-#% LICENSE, version 2.1. 
-#%==========================================================================
-    [D,n]=input.shape
-    [D,nn]=test.shape
-    expX=hyperpara
-    a=np.zeros([nn,n])
-
-    for d in range(D):
-            a=a+expX[0][d]*(np.tile(input[d,:],[nn,1])-np.tile(np.reshape(test[d,:],[-1,1]),[1,n]))**2
-    
-    a = expX[1]*np.exp(-0.5*a)
-    b = expX[1]
-    mul=a.dot(inv_C.T)
-    dmul=np.multiply(a,mul) 
-    s_a_inv_C_a = np.sum(dmul,axis=1)
-    var = b -s_a_inv_C_a 
-         
-    return var
-
-
 class supportmodel:
-    def __init__(self, input= None, support = 'SVDD', hyperparams = None):
+    def __init__(self, input, support, supportopt, hyperparams):
         self.input=input  ### input.shape = [dim, N_sample]
         assert type(self.input) is np.ndarray, 'ERROR: input type must be numpy.ndarray'
         self.support=support  ### 'SVDD' or 'GP'
         assert self.support=='SVDD' or self.support=='GP', 'ERROR: Support must be \'SVDD\', or \'GP\''
         if self.support=='SVDD':
-            if hyperparams == None:
-                hyperparams =  {'ker':'rbf','arg':1,'solver':'imdm','C':1}
             self.svdd_normalize()
-            self.svdd_params= hyperparams
+            self.svdd_params=supportopt
             self.svdd()
         elif self.support=='GP':
-            if hyperparams == None:
-                hyperparams = [100*np.ones((input.shape[0],1)),1,10] 
             self.gp_normalize()
             self.gp_params=hyperparams
             assert self.gp_params[0].shape[0]==self.input.shape[0], "ERROR: invalid gp_params shape"
@@ -259,8 +262,7 @@ class supportmodel:
         C = params[1]*np.exp(-0.5*C) + params[2]*np.eye(n)
                     
         self.inv_C = inv(np.matrix(C))
-        
-    ####Bumho Son
+
     def svdd_normalize(self):
         Xin = self.input
         [dim, n] = Xin.shape
@@ -274,27 +276,23 @@ class supportmodel:
         X_normal = (Xin - means)/stds
 
         self.normalized_input = X_normal
-        #print("Normalized input : ", self.normalized_input)
+        print("Normalized input : ", self.normalized_input)
     
     def svdd(self):
         print("Step 1: Training Support Function by SVDD ...")
         start_time = time.time()
 
-        model = {}
-        #self.model['support'] = 'SVDD'
+        self.model = {}
+        self.model['support'] = 'SVDD'
         options = self.svdd_params
         if options.get('ker') == None:
             options['ker'] = 'rbf'
-            print("You need to specify kernel type with \'ker\'")
         if options.get('arg') == None:
             options['arg'] = 1
-            print("You need to specify kernel parameters with \'arg\', consistently with kernel type")
         if options.get('solver') == None:
             options['solver'] = 'imdm'
-            print("You must specify solver type with \'solver\'")
         if options.get('C') == None:
             options['C'] = 1
-            print("You must specifly svm parameter C with \'C\'")
 
         [dim, num_data] = self.normalized_input.shape
 
@@ -305,50 +303,40 @@ class supportmodel:
         b = options['C']
         I = np.arange(num_data)
         [Alpha, fval] = qpssvm(H, f, b, I)  # 아직 qpssvm에서 stat 미구현
-        #print(Alpha)
-        #inx = np.where(Alpha > pow(10, -5))[0]  # Alpha를 0이상으로 잡으면 잘못잡힘.
-        inx = (Alpha > pow(10,-5)).ravel()
-        #self.model['support_type'] = 'SVDD'
-        
-        model['Alpha'] = Alpha[inx]
-        model['sv_ind'] = np.logical_and(Alpha > pow(10, -5) , Alpha < (options['C'] - pow(10, -7))).ravel()
-        #print(self.model['sv_ind'])
-        model['bsv_ind'] = (Alpha >= (options['C'] - pow(10, -7))).ravel()
-        model['inside_ind'] = (Alpha < (options['C'] - pow(10, -7))).ravel()
-        #print(Alpha[inx].shape, K[inx,:][:,inx].shape)   
-        model['b'] = np.dot(np.dot(Alpha[inx].T, K[inx,:][:,inx]), Alpha[inx])
+
+        inx = np.where(Alpha > pow(10, -5))[0]  # Alpha를 0이상으로 잡으면 잘못잡힘.
+        self.model['support_type'] = 'SVDD'
+        self.model['Alpha'] = Alpha[inx]
+        self.model['sv_ind'] = np.where((Alpha > pow(10, -5)) & (Alpha < (options['C'] - pow(10, -7))))[0]
+        print(self.model['sv_ind'])
+        self.model['bsv_ind'] = np.where(Alpha >= (options['C'] - pow(10, -7)))[0]
+        self.model['inside_ind'] = np.where(Alpha < (options['C'] - pow(10, -7)))[0]
+
+        self.model['b'] = np.dot(np.dot(Alpha[inx].T, K[inx, :][:, inx]), Alpha[inx])
 
         # setup model
-        model['sv'] = {}
-        model['sv']['X'] = self.normalized_input[:, inx]
+        self.model['sv'] = {}
+        self.model['sv']['X'] = self.normalized_input[:, inx]
 
-        model['sv']['inx'] = inx
-        model['nsv'] = len(inx)
-        model['options'] = options
+        self.model['sv']['inx'] = inx
+        self.model['nsv'] = len(inx)
+        self.model['options'] = options
         #    model['stat'] = stat
-        model['fun'] = 'kradius'
-        self.svdd_model = model
+        self.model['fun'] = 'kradius'
 
-        radius = kradius(self.normalized_input[:, model['sv_ind']], self)
-        self.R = np.amax(radius)
+        radius = kradius(self.normalized_input[:, self.model['sv_ind']], self.model)
+
+        self.model['r'] = np.amax(radius)
 
         print("Training Completed!")
-        self.training_time = time.time()-start_time
-        print("Trading time for SVDD is : ", self.training_time, " sec")
-
-    
-
-
+        end_time = time.time()
+        print("Trading time for SVDD is : ", end_time - start_time, " sec")
 
 class labeling:
-    def __init__(self, supportmodel=None, labelingmethod= 'CG-SC', options=None):
+    def __init__(self, supportmodel, labelingmethod, options=None):
         self.supportmodel = supportmodel
         self.labelingmethod = labelingmethod
         self.options = options
-        t1 = time.time()
-        self.run()
-        self.labeling_time = time.time()-t1
-        print(self.labeling_time)
 
     def run(self):
         print("Step 2 : Labeling by the method "+self.labelingmethod+"...")
@@ -405,9 +393,12 @@ class labeling:
 #% samples are column vectors
         model = self.supportmodel
         N = input.shape[1]
-        t1 = time.time()
+
         adjacent = np.zeros([N,N])
-        R = model.R+10**(-7)  #% Squared radius of the minimal enclosing ball
+        if model.support == "SVDD":
+            R = model.model['r']+pow(10, -7) #% Squared radius of the minimal enclosing ball
+        else:
+            R = model.R + pow(10, -7)
     
         for i in range(N): ##rows
             for j in range(N): ##columns
@@ -437,9 +428,7 @@ class labeling:
                             
         self.adjacent_matrix = adjacent
         self.symmetric = (np.max(np.abs(adjacent-adjacent.T) == 0))
-        print("time to find adjacent = ",time.time()-t1)
 
-    
     def cgsc(self):
 #% CGSVC Support Vector Clusteing using Complete-Graph Based Labeling Method
 #%
@@ -459,9 +448,8 @@ class labeling:
         model = self.supportmodel
         self.findAdjMatrix(model.normalized_input)
         self.cluster_label = cg.connected_components(self.adjacent_matrix)
-        #print(self.cluster_label[1])
+        print(self.cluster_label[1])
 
-    ### Junyoung Byun
     def findSEPs(self):
         model = self.supportmodel
         X = model.normalized_input
@@ -470,22 +458,22 @@ class labeling:
         N_locals = []
         local_val = []
 
-        if model.support == 'GP':
+        if model.model['support_type'] == 'GP':
             for i in range(N):
-                x0 = X[:,i]
-                res = minimize(fun=my_R_GP, x0=x0, args = model)
+                x0 = X[i]
+                res = minimize(fun=my_R_GP1, x0=x0)
                 [temp, val] = [res.x, res.fun]
                 N_locals.append(temp)
                 local_val.append(val)
 
-        else: 
+        if model.model['support_type'] == 'SVDD':
             for i in range(N):
-                x0 = X[:,i]
+                x0 = X.T[i]
                 if len(x0) <= 2:
-                    res = minimize(fun=my_R, x0=x0, args=model, method='Nelder-Mead')
+                    res = minimize(fun=my_R1, x0=x0, args=model.model, method='Nelder-Mead')
                     [temp, val] = [res.x, res.fun]
                 else:
-                    res = minimize(fun=my_R, x0=x0, args = model, method='trust-ncg')
+                    res = minimize(fun=my_R1, x0=x0, method='trust-ncg')
                     [temp, val] = [res.x, res.fun]
                 N_locals.append(temp)
                 local_val.append(val)
@@ -498,9 +486,7 @@ class labeling:
         return [N_locals, newlocal, newlocal_val, match_local]
 
     def smsc(self):
-        t1 = time.time()
         [rep_locals, locals, local_val, match_local] = self.findSEPs()
-        print("time to find SEPs = ",time.time()-t1)
         # %% Step 2 : Labeling Data for Clustering
 
         self.findAdjMatrix(locals.T)
@@ -510,99 +496,541 @@ class labeling:
         csm = cg.connected_components(self.adjacent_matrix)
         local_cluster_assignments = csm[1]
         local_cluster_assignments = np.array(local_cluster_assignments)
-        self.cluster_label = local_cluster_assignments[match_local]
-        #print(self.cluster_label)
+        print(local_cluster_assignments[match_local])
 
-    def findTPs(self, local, epsilon):
+    def findTPs(self):
+        locals = self.locals
         model = self.supportmodel
+        epsilon = self.options['epsilon']
+        R = model.R + 10 ** (-7)
+        print(self.locals)
+        ts = {}
+        ts['x'] = []
+        ts['f'] = []
+        ts['neighbor'] = []
+        ts['purturb'] = []
+        [N, attr] = locals.shape
+        tmp_x = []
+
+        if model.support == 'GP':
+            for i in range(N):
+                for j in range(i, N):
+                    for k in range(10):
+                        x0 = locals[i] + 0.1 * (k + 1) * (locals[j] - locals[i])
+                        sep = fsolve(func=fsolve_R_GP, x0=x0, args=model, xtol=10 ** (-6))
+                        tmp_x.append(sep)
+            tmp_x = np.array(tmp_x)
+            [dummy, I, J] = np.unique(np.round(10 * tmp_x), axis=0, return_index=True, return_inverse=True)
+            tmp_x = tmp_x[I, :]
+            for i in range(list(tmp_x.shape)[0]):
+                sep = tmp_x[i]
+                [f, g, H] = my_R_GP2(sep, model)
+                [D, V] = la.eig(H)
+
+                ind = []
+                if np.sum(D < 0) == 1:
+                    sep1 = sep + epsilon * V[np.where(D < 0)]
+                    sep2 = sep - epsilon * V[np.where(D < 0)]
+
+                    if attr == 2:
+                        res1 = minimize(fun=my_R_GP1, x0=sep1, args=model, method='Nelder-Mead')
+                        [temp1, val] = [res1.x, res1.fun]
+                        res2 = minimize(fun=my_R_GP1, x0=sep2, args=model, method='Nelder-Mead')
+                        [temp2, val] = [res2.x, res2.fun]
+                    else:
+                        res1 = minimize(fun=my_R_GP1, x0=sep1, args=model, hess=True)
+                        [temp1, val] = [res1.x, res1.fun]
+                        res2 = minimize(fun=my_R_GP1, x0=sep2, args=model, hess=True)
+                        [temp2, val] = [res2.x, res2.fun]
+                    [dummy, ind1] = [np.min(euclidean_distances(temp1.reshape(1, -1), locals)),
+                                     np.argmin(euclidean_distances(temp1.reshape(1, -1), locals))]
+                    [dummy, ind2] = [np.min(euclidean_distances(temp2.reshape(1, -1), locals)),
+                                     np.argmin(euclidean_distances(temp2.reshape(1, -1), locals))]
+                    if ind1 != ind2:
+                        ts['x'].append(sep)
+                        ts['f'].append(f)
+                        ts['neighbor'].append([ind1, ind2])
+                        ts['purturb'].append([sep1, sep2])
+
+        if model.support == 'SVDD':
+            for i in range(N):
+                for j in range(i, N):
+                    for k in range(10):
+                        x0 = locals[i] + 0.1 * (k + 1) * (locals[j] - locals[i])
+                        sep = fsolve(func=fsolve_R, x0=x0, args=model, maxfev=300, xtol=10 ** (-6))
+                        tmp_x.append(sep)
+            tmp_x = np.array(tmp_x)
+            [dummy, I, J] = np.unique(np.round(10 * tmp_x), axis=0, return_index=True, return_inverse=True)
+            tmp_x = tmp_x[I, :]
+
+            for i in range(list(tmp_x.shape)[0]):
+                sep = tmp_x[i]
+                [f, g, H] = my_R2(sep, model)
+                [D, V] = la.eig(H)
+                ind = []
+                if np.sum(D < 0) == 1:
+
+                    sep1 = sep + epsilon * V[np.where(D < 0)]
+                    sep2 = sep - epsilon * V[np.where(D < 0)]
+                    if attr == 2:
+                        res1 = minimize(fun=my_R1, x0=sep1, args=model, method='Nelder-Mead')
+                        [temp1, val] = [res1.x, res1.fun]
+                        res2 = minimize(fun=my_R1, x0=sep2, args=model, method='Nelder-Mead')
+                        [temp2, val] = [res2.x, res2.fun]
+                    else:
+                        res1 = minimize(fun=my_R1, x0=sep1, args=model, hess=True)
+                        [temp1, val] = [res1.x, res1.fun]
+                        res2 = minimize(fun=my_R1, x0=sep2, args=model, hess=True)
+                        [temp2, val] = [res2.x, res2.fun]
+                    [dummy, ind1] = [np.min(euclidean_distances(temp1.reshape(1, -1), locals)),
+                                     np.argmin(euclidean_distances(temp1.reshape(1, -1), locals))]
+                    [dummy, ind2] = [np.min(euclidean_distances(temp2.reshape(1, -1), locals)),
+                                     np.argmin(euclidean_distances(temp2.reshape(1, -1), locals))]
+                    if ind1 != ind2:
+                        ts['x'].append(sep)
+                        ts['f'].append(f)
+                        ts['neighbor'].append([ind1, ind2])
+                        ts['purturb'].append([sep1, sep2])
+
+        ts['x'] = np.array(ts['x'])
+        ts['f'] = np.array(ts['f'])
+        ts['neighbor'] = np.array(ts['neighbor'])
+        ts['purturb'] = np.array(ts['purturb'])
+        self.ts = ts
+
+    def hierarchicalLabelTSVC(self):
+        print("hierarchicalLableTSVC")
+        nOfLocals = self.locals.shape[0]
+        ts = self.ts
+        nOfTS = len(ts['f'])
+        K = self.options['K']
+
+        local_clusters_assignments = []
+        f_sort = np.sort(ts['f'], 0)  # small --> large
+        print("f_sort:", f_sort)
+        adjacent = np.zeros([nOfLocals, nOfLocals, nOfTS])
+        a = []
+        flag = 0
+        for m in range(nOfTS):
+            cur_f = f_sort[
+                -m - 1]  # % cutting level:large --> small  (small number of clusters --> large number of clusters)
+            # %cur_f=f_sort(i);         % cutting level: small --> large (large number of clusters --> small number of clusters)
+
+            tmp = np.nonzero(ts['f'] < cur_f)[0]
+            if len(tmp) > 0:  # % TSs inside the sphere
+                for j in range(len(tmp)):
+                    adjacent[ts['neighbor'][tmp[j], 0], ts['neighbor'][tmp[j], 1], m] = 1
+                    adjacent[ts['neighbor'][tmp[j], 1], ts['neighbor'][tmp[j], 0], m] = 1
+                    # %% To connect nodes which can be connected via directly connected edges.
+                for i in range(nOfLocals):
+                    for j in range(i):
+                        if (adjacent[i, j, m] == 1):
+                            adjacent[i, :, m] = np.logical_or(adjacent[i, :, m], adjacent[j, :, m])
+                    adjacent[i, i] = 1
+
+            a = [a, cur_f]
+            my_ts = {}
+            my_ts['x'] = ts['x'][tmp, :]
+            my_ts['f'] = ts['f'][tmp, :]
+            my_ts['purturb'] = ts['purturb'][tmp, :]
+            my_ts['neighbor'] = ts['neighbor'][tmp, :]
+            my_ts['cuttingLevel'] = cur_f
+            ind = np.nonzero(ts['f'] == cur_f)[0]
+            my_ts['levelx'] = ts['x'][ind[0], :]
+            tmp_ts = {}  ####dictionary
+            tmp_ts[m] = my_ts
+
+            assignment = cg.connected_components(adjacent[:, :, m])[1]
+            print("assignment:", assignment)
+            print("N_clusters:", np.max(assignment) + 1)
+            if np.max(assignment) == K - 1:
+                print('We can find the number of K clusters')
+                # % clstmodel update
+                self.out_ts = tmp_ts[m]
+                # % cluster assignment into entire data points
+                self.local_ass = assignment
+                self.cluster_labels = self.local_ass[self.match_local].T
+                flag = 1
+                break
+
+            local_clusters_assignments = [local_clusters_assignments, assignment]
+
+            # % cannot find k clusters
+        if flag == 0:
+            print(
+                'Cannot find cluster assignments with K number of clusters, instead that we find cluster assignments the with the nearest number of clusters to K !');
+            [dummy, ind] = np.min(euclidean_distances(np.max(local_clusters_assignments, 0).T, K), 0)  ####min/max
+
+            # %ts=[];
+            self.out_ts = tmp_ts[ind[0]]
+            local_clusters_assignments = local_clusters_assignments[:, ind[0]]
+            self.local_ass = local_clusters_assignments
+            self.cluster_labels = self.local_ass[self.match_local]
+            print(self.cluster_labels)
         
-        
+    def tmsc(self):
+        fHierarchical = self.options['hierarchical']
+
+        # % Find SEPs
+        [rep_locals, locals, local_val, match_local] = self.findSEPs()
+        nOfLocals = locals.shape[0]
+        self.locals = locals  #####transpose
+        self.match_local = match_local
+        # % Find transition points and label the SEPs
+        self.findTPs()
+
+        # %% Cluster assignment of each data point
+
+        # --- Automatic determination of cluster number based on the cluster boundary
+        if not (fHierarchical):
+
+            print('Automatic determination of cluster numbers based on the SVDD boundearies defined by R^2');
+            adjacent = np.zeros([nOfLocals, nOfLocals])
+
+            tmp = np.nonzero(self.ts['f'] < self.supportmodel.R)[0]  ########
+            if np.nonzero(len(tmp)):  # % only check the connectivity of TSs inside the sphere
+                for j in range(len(tmp)):
+                    adjacent[self.ts['neighbor'][tmp[j], 0], self.ts['neighbor'][tmp[j], 1]] = 1
+                    adjacent[self.ts['neighbor'][tmp[j], 1], self.ts['neighbor'][tmp[j], 0]] = 1
+                    # %% To connect nodes which can be connected via directly connected edges.
+                for i in range(nOfLocals):
+                    for j in range(i):
+                        if (adjacent[i, j] == 1):
+                            adjacent[i, :] = np.logical_or(adjacent[i, :], adjacent[j, :])
+                    adjacent[i, i] = 1
+                self.local_clusters_assignments = np.array(cg.connected_components(adjacent)[1])
+                print(self.local_clusters_assignments)
+                # % model update
+            self.ts['x'] = self.ts['x'][tmp, :]
+            self.ts['f'] = self.ts['f'][tmp, :]
+            self.ts['purturb'] = self.ts['purturb'][tmp, :]
+            self.ts['neighbor'] = self.ts['neighbor'][tmp, :]
+            self.ts['cuttingLevel'] = self.supportmodel.R
+
+            # % cluster assignment into entire data points
+            self.cluster_labels = self.local_clusters_assignments[match_local].T  ###transpose
+            print(self.cluster_labels)
+        else:
+            self.hierarchicalLabelTSVC()
+
+    #0915 Bumho
+    def fmsc(self):
+        self.clstmodel = {}
+        self.clstmodel['options'] = self.options
+        self.clstmodel['support_model'] = self.supportmodel
+
+        #Partitioning Data into Small Ball
+        self.R1 = self.options['R1']
+        self.R2 = self.options['R2']
+        self.partition(self.supportmodel.normalized_input.T, self.R1)
+
+        [all_locals, unique_locals, match_locals] = self.labelFSVC(self.centers, self.supportmodel, self.R2)
+
+        self.clstmodel['local'] = unique_locals.T
+        self.findAdjMatrix(unique_locals.T)
 
 
-def my_R(x, supportmodel):
+        csm = cg.connected_components(self.adjacent_matrix)
+        local_clusters_assignments = csm[1]
+        local_clusters_assignments = np.array(local_clusters_assignments)
+
+
+
+        cluster_labels = local_clusters_assignments[match_locals]
+        self.clstmodel['local_clusters_assignments'] = local_clusters_assignments
+
+        self.clstmodel['cluster_labels'] = self.matchBallIndex(self.clst, cluster_labels, self.centers, unique_locals)
+        self.clstmodel['centers'] = self.centers
+        self.clstmodel['match_locals'] = match_locals
+
+        print(self.clstmodel['cluster_labels'])
+
+
+    def partition(self, X, r):
+        [N, d] = X.shape
+        clst = np.zeros((N,1))
+        x_ind = np.arange(0,N,1)
+        X2 = X
+        i=0
+        C = np.empty(shape = [0, d])
+
+
+        while(True):
+            randind = np.random.permutation(X2.shape[0])
+            C = np.append(C, np.array([X2[randind[0]]]), axis=0)
+            dst = np.sqrt(self.dist2(C[i], X2))
+            ind = np.where(dst<r)[1]
+
+            assert ind.size > 0, 'ERROR: R1 is too small! R1 must be positive real number'
+            clst[x_ind[ind]] = i
+
+            X2 = np.delete(X2, ind, 0)
+            x_ind = np.delete(x_ind, ind, 0)
+
+            i = i+1
+            if X2.size == 0:
+                break
+
+        self.centers = C
+        self.clst = clst
+
+    def labelFSVC(self, centers, model, R2):
+        [N, dim] = centers.shape
+
+        N_locals = []
+        local_val = []
+        arrival = np.zeros([N, 1])
+
+        all_locals = centers
+        converge = 0
+        iter = 1
+
+        while(converge == 0):
+            ind = np.where(arrival == 0)[0]
+            run_Samples = all_locals[ind]
+
+            if model.support == 'SVDD':
+
+                for i in range(len(ind)):
+                    x0 = run_Samples[i]
+                    if len(x0) <= 2:
+                        res = minimize(fun=my_R1, x0=x0, args=model, method='Nelder-Mead')
+                        [temp, val] = [res.x, res.fun]
+                    else:
+                        res = minimize(fun=my_R1, x0=x0, args=model, method='trust-ncg')
+                        [temp, val] = [res.x, res.fun]
+                    all_locals[ind[i]] = temp
+                    #local_val[ind[i]] = val
+
+                    if np.sum((temp-x0)*(temp-x0)) < pow(10, -3):
+                        arrival[ind[i]][0] = 1
+
+            else:
+                for i in range(len(ind)):
+                    x0 = run_Samples[i]
+                    if len(x0) <= 2:
+                        res = minimize(fun=my_R_GP1, x0=x0, args=model, method='Nelder-Mead')
+                        [temp, val] = [res.x, res.fun]
+                    else:
+                        res = minimize(fun=my_R_GP1, x0=x0, args=model, method='trust-ncg')
+                        [temp, val] = [res.x, res.fun]
+                    all_locals[ind[i]] = temp
+                    #local_val[ind[i]] = val
+
+                    if np.sum((temp-x0)*(temp-x0)) < pow(10, -3):
+                        arrival[ind[i]][0] = 1
+
+
+            if np.sum(arrival) > 0:
+                [all_locals, arrival] =self.mergeBall(all_locals, arrival, R2)
+
+            if np.sum(arrival) == N:
+                converge = 1
+
+            iter = iter + 1
+
+        unique_locals, I, match_locals = np.unique(np.round(10 * all_locals), axis=0, return_index=True, return_inverse=True)
+        unique_locals = all_locals[I]
+
+        #local_val = local_val[I]
+
+        return [all_locals, unique_locals, match_locals]
+
+    def mergeBall(self, all_locals, arrival, R2):
+        N = all_locals.shape[0]
+        Done = np.zeros([N, 1])
+        State = all_locals
+
+        #R2 = self.options.R2
+
+        for i in range(N):
+            if Done[i, 0] == 0:
+                Done[i, 0] = 1
+                cur_sample = all_locals[i]
+
+                inds = np.where(Done == 0)[0]
+                dst = np.sqrt(self.dist2(cur_sample, all_locals[inds]))  ######dist2
+                inds2 = np.where(dst < R2)[1]
+
+                if len(inds2) > 0 and arrival[i][0] == 1:
+
+                    inds3 = np.where(arrival[inds[inds2]] == 0)[0]
+                    if len(inds3) > 0:
+                        State[[inds[inds2[inds3]]]] = np.tile(cur_sample, [len(inds3), 1])
+                        arrival[[inds[inds2[inds3]]]] = np.ones([len(inds3), 1])
+                        Done[[inds[inds2[inds3]]]] = np.ones([len(inds3), 1])
+
+                elif len(inds2) > 0 and arrival[i][0] == 0:
+                    inds4 = np.where(arrival[inds[inds2]] == 1)[0]
+                    if len(inds4) == 0:
+                        State[inds[inds2]] = np.tile(cur_sample, [len(inds2), 1])
+                        Done[inds[inds2]] = np.ones([len(inds2), 1])
+                    else:
+                        State[i] = all_locals[inds[inds2[inds4[0]]]]
+                        arrival[i] = 1
+
+        return [State, arrival]
+
+    def dist2(self, x, c):
+
+        if len(x.shape) == 1:
+            ndata = 1
+            dimx = x.shape[0]
+        else :
+            [ndata, dimx] = x.shape
+
+        if len(c.shape) == 1:
+            ncentres = 1
+            dimc = c.shape[0]
+        else:
+            [ncentres, dimc] = c.shape
+        assert dimx == dimc, "ERROR : Data dimension does not match dimension of centres"
+
+        n2 = (np.ones([ncentres, 1]).dot(np.sum((x*x).T, axis=0).reshape(1, ndata))).T + np.ones([ndata, 1]).dot(np.sum((c*c).T, axis=0).reshape(1, ncentres)) - 2 * (x.dot(c.T))
+
+        if len(np.where(n2<0)[0]) != 0:
+            minus_ind = np.where(n2<0)
+            for ind in range(len(minus_ind[0])):
+                n2[minus_ind[0][ind]][minus_ind[1][ind]] = 0
+
+        return n2
+
+    def matchBallIndex(self, clst, label, C, EVs):
+        [n1, d1] = C.shape
+        [n2, d2] = EVs.shape
+        final_label = np.zeros([clst.shape[0], 1])
+
+        for i in range(0, n1):
+            ind = np.where(clst == i)[0]
+            final_label[ind] = label[i]
+
+
+        return final_label
+
+def my_R1(x, model):
+    f = kradius(x.reshape(x.shape[0], 1), model)
+    return f
+
+def my_R2(x, model):
     d = x.shape[0]
-    #n = supportmodel.svdd_model['nsv']
-    f = kradius(x.reshape(x.shape[0], 1),supportmodel)
+    n = model.svdd_model['nsv']
+    f = kradius(x.reshape(x.shape[0], 1), model)
 
-    #q = 1 / (2 * model['options']['arg'] * model['options']['arg'])
-    #K = kernel(model['sv']['X'], model['options']['ker'], model['options']['arg'], input2=x.reshape(-1,1))
-    #g = 4 * q * np.dot(model['Alpha'].reshape(model['Alpha'].shape[0], 1).T, np.multiply(np.matlib.repmat(K, 1, d), (np.matlib.repmat(x, n, 1) - model['sv']['X'].T)))
+    q = 1 / (2 * model.svdd_model['options']['arg'] * model.svdd_model['options']['arg'])
+    K = kernel(model.svdd_model['sv']['X'], model.svdd_model['options']['ker'], model.svdd_model['options']['arg'],
+               input2=x.reshape(x.shape[0], 1))
+    g = 4 * q * np.dot(model.svdd_model['Alpha'].reshape(model.svdd_model['Alpha'].shape[0], 1).T,
+                       np.multiply(ml.repmat(K, 1, d),
+                                   (ml.repmat(x, n, 1) - model.svdd_model['sv']['X'].T)))
 
-    #const = np.multiply(model['Alpha'], K)
-    #H = np.zeros([d,1]).T
+    const = np.multiply(model.svdd_model['Alpha'], K)
+    H = []
 
-    #for i in range(d):
-    #    H = H - 8 * q * q * np.sum(np.multiply(np.multiply(np.matlib.repmat(const.T, d, 1), (np.matlib.repmat(x[i], d, n) - np.matlib.repmat(model['sv']['X'][i,:].T, d, 1))), (np.matlib.repmat(x.reshape(x.shape[0],1), 1, n) - model['sv']['X'])), axis = 1)
-    #H = H + 4 * q * np.eye(d)*np.dot(model['Alpha'].reshape(model['Alpha'].shape[0], 1).T, K)
+    for i in range(d):
+        H.append(- 8 * q * q * np.sum(np.multiply(np.multiply(ml.repmat(const.T, d, 1), (
+        ml.repmat(x[i], d, n) - ml.repmat(model.svdd_model['sv']['X'][i, :].T, d, 1))), (
+                                                  ml.repmat(x.reshape(x.shape[0], 1), 1, n) -
+                                                  model.svdd_model['sv']['X'])), axis=1).T)
+    H = np.array(H).T
+    H = H + 4 * q * np.eye(d) * np.dot(model.svdd_model['Alpha'].reshape(model.svdd_model['Alpha'].shape[0], 1).T, K)
+    return f, g, H
+
+def my_R_GP1(x, model):
+    f = var_gpr(np.reshape(x, [-1, 1]), model.normalized_input, model.inv_C, model.gp_params)  ##full(X)
     return f
 
+def my_R_GP2(x, model):
+    # %
+    # %   Calculating function value and gradient of
+    # %   the trained kernel radius function
+    # %==========================================================================
+    # % Implemented by Kyu-Hwan Jung at April 26, 2010.
+    # % Modified by Sujee Lee at September 3, 2014.
+    # %
+    # % * The source code is available under the GNU LESSER GENERAL PUBLIC
+    # % LICENSE, version 2.1.
+    # %==========================================================================
+    x = x.reshape(-1, 1)
+
+    input = model.normalized_input
+    inv_K = model.inv_C
+    hparam = model.gp_params
+
+    f = var_gpr(x, input, inv_K, hparam)  ##############full
+
+    input = input.T
+    x = x.reshape(1, -1)
+    hparam = np.append(hparam[0], np.array(hparam[1:]).reshape(-1, 1), axis=0)
+    [N, D] = input.shape
+    [nn, D] = x.shape  # % nn=1
+    k = np.zeros((N, nn))
+
+    for d in range(D):
+        k += hparam[d][0] * np.power((ml.repmat(input[:, d].reshape(-1, 1), 1, nn) - ml.repmat(np.transpose(x[:, d]), N, 1)), 2)
+    k = hparam[D] * np.exp(-0.5 * k)
+    gk = -np.multiply(np.multiply(ml.repmat(k, 1, D), ml.repmat(np.transpose(hparam[0:D]), N, 1)), ml.repmat(x, N, 1) - input)
+    g = -2 * np.dot(np.dot(np.transpose(gk), inv_K), k)
+
+    Hk = np.zeros((N, D ** 2))  # % Hessian of k. (make N * D^2 matrix)
+    for j in range(D):
+        Hkj = np.multiply(gk , -hparam[j] * np.matlib.repmat((x[:, j] - input[:, j]), D, 1).T ) # % x(:,j)-input(:,j) : scalar - vector
+        Hkj[:, j] = Hkj[:, j] - hparam[j] * k.reshape(1, -1)
+        Hk[:, j * D:(j + 1) * D] = Hkj  #####################index
+    H1 = np.matmul(np.matmul(Hk.T, inv_K), k)  # % D^2 * 1
+    H1 = np.reshape(H1, [D, D])  # % D * D
+    H2 = np.matmul(np.matmul(gk.T, inv_K), gk)  # % D * D
+    H = -2 * (H1 + H2)
+    # %         H= hessian(@(xx)var_gpr(xx,model.X,model.inv_C,model.hyperparams),x); %%
+    return f, g, H
+
+def fsolve_R(x, model):
+    d = x.shape[0]
+    n = model.svdd_model['nsv']
+
+    q = 1 / (2 * model.svdd_model['options']['arg'] ** 2)
+    K = kernel(model.svdd_model['sv']['X'], ker=model.svdd_model['options']['ker'],
+               arg=model.svdd_model['options']['arg'], input2=x.reshape(x.shape[0], 1))
+
+    F = 4 * q * np.dot(np.transpose(model.svdd_model['Alpha']),
+                       np.multiply(ml.repmat(K, 1, d), ml.repmat(x, n, 1) - np.transpose(model.svdd_model['sv']['X'])))
+
+    # if nargout >1:
+    #    const = np.multiply(np.transpose(model['Alpha']),K)
+    #    J = []
+    #    for i in range(d):
+    #    for i in range(d):
+    #        J=[J-8*q**2*np.sum(np.multiply(np.transpose(ml.repmat(np.transpose(const),d,1))),ml.repmat(x[i],d,n)-np.multiply(np.transpose(ml.repmat(model['sv']['X'][i,:],d,1)),ml.repmat(np.transpose(x),1,n)-model['sv']['X']),1)]
+
+    #   J = J + 4*q*np.multiply(np.multiply(np.eye(d), np.transpose(model['Alpha'])), K)
+
+    return F[0]
 
 
-def my_R_GP(x, supportmodel):
-    model=supportmodel
-    f= var_gpr(np.reshape(x,[-1,1]), model.normalized_input, model.inv_C, model.gp_params) ##full(X)
-#    %[n d]=size(model.SVs);
-#    %q=model.Parameters(4);
-#    %SV=full(model.SVs);
-#    %beta=model.sv_coef;
+def fsolve_R_GP(x, model):
+    input = model.normalized_input.T
+    hparam = model.gp_params
 
-    return f
+    [N, D] = input.shape
+    x = x.reshape(-1, D)
+    [nn, D] = x.shape
 
-                                  
-"""
-def my_R_GP(x, supportmodel, nargout=1):
-##Usage of nargout
-##if you need f only->nargout=1
-##if you need f and gradient only->nargout=2
-##if you need all f, gradient and Hessian->nargout=3
+    inv_K = model.inv_C
 
-#%   Calculating function value and gradient of
-#%   the trained kernel radius function
-#%==========================================================================
-#% Implemented by Kyu-Hwan Jung at April 26, 2010.
-#% Modified by Sujee Lee at September 3, 2014.
-#%
-#% * The source code is available under the GNU LESSER GENERAL PUBLIC
-#% LICENSE, version 2.1. 
-#%==========================================================================
-    model=supportmodel
-    f= var_gpr(x, model.input, model.inv_C, model.gp_params) ##full(X)
-#    %[n d]=size(model.SVs);
-#    %q=model.Parameters(4);
-#    %SV=full(model.SVs);
-#    %beta=model.sv_coef;
 
-    if nargout>1:
-        #x=full(x)
-        xt=x.T
-        
-        input = model.input
-        hparam = model.gp_params
-        tinput=input.T
-        [D,N]=input.shape
-        [D,nn]=x.shape # % nn=1
-    
-        inv_K = model.inv_C
-        k = np.zeros([N, nn])  #% create and zero space
-        for d in range(D):
-            k = k + hparam[0][d]*(np.tile(np.reshape(tinput[:,d],[-1,1]),[1,nn])-np.tile(xt[:,d],[N,1]))**2 ## nn * N, last term, np.tie(x....), need to be changed
-        k = hparam[1]*np.exp(-0.5*k)
-                    
-        gk = - np.tile(k,[1,D])*np.tile(hparam[0,:],[N,1])*(np.tile(xt,[N,1])-tinput)  #% N * D ##hparam[0:D] ##elementwise
-        g = - 2 * np.matmul(np.matmul(gk.T , inv_K) , k) #D * nn
-        #%     g= gradient(@(xx)var_gpr(xx,model.X,model.inv_C,model.hyperparams),x); %%
-                                       
-        if nargout>2:
-            Hk = np.zeros(N, D**2) # % Hessian of k. (make N * D^2 matrix)
-            for j in range(D):
-                Hkj = gk*(-hparam[0][j]*np.tile(np.reshape(xt[j]-tinput[:,j],[-1,1]),1,D))  #% x(:,j)-input(:,j) : scalar - vector
-                Hkj[:,j] = Hkj[:,j] - hparam[0][j]*k
-                Hk[:,j*D:(j+1)*D-1] = Hkj
-            H1 = np.matmul(np.matmul(Hk.T, inv_K), k)  #% D^2 * 1
-            H1 = np.reshape(H1,[D,D])  #% D * D
-            H2 = np.matmul(np.matmul(gk.T, inv_K),gk) #% D * D
-            H = -2*(H1+H2)
-            #%         H= hessian(@(xx)var_gpr(xx,model.X,model.inv_C,model.hyperparams),x); %%
-    return f,g,H
+    hparam = np.append(hparam[0], np.array(hparam[1:]).reshape(-1,1), axis=0)
 
-"""
+    k = np.zeros((N, nn))
+    for d in range(D):
+
+        k += hparam[d][0] * np.power((ml.repmat(input[:, d].reshape(-1, 1), 1, nn)-ml.repmat(np.transpose(x[:, d]), N, 1)), 2)
+    k = hparam[D] * np.exp(-0.5 * k)
+
+    gk = -np.multiply(np.multiply(ml.repmat(k, 1, D), ml.repmat(np.transpose(hparam[0:D]), N, 1)),
+                      ml.repmat(x, N, 1) - input)
+    g = -2 * np.dot(np.dot(np.transpose(gk),inv_K), k)
+
+    return g.ravel()
+
+                                   
+
+
