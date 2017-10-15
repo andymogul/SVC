@@ -14,23 +14,16 @@ from scipy.sparse import csgraph as cg
 from IPython import embed
 from SVC_init import *
 
-data_name='ring'
+data_name='data/ring'
 input = load_data(data_name)
-print(input)
 print("with data",data_name)
 support = "GP"
-supportopt = {'ker': 'rbf', 'arg': 0.5, 'C': 0.5}
-
 hyperparams = [100*np.ones((input.shape[0],1)), 1, 10]
-st=time.time()
-model = supportmodel(input,support, supportopt, hyperparams)
-et=time.time()
-print("Training time:", et-st)
-print("---------------------------------")
-options = {'R1' : 0.01, 'R2' : 0.01}
-labmodel = labeling(model,"F-MSC", options)
-labmodel.run() 
-et1=time.time()
-print("Labeling time:", et1-et)
-print("---------------------------------")
+#hyperparams = {'ker': 'rbf', 'arg': 0.5, 'C': 0.5 }
+
+model = supportmodel(input,support,hyperparams)
+
+options = {'hierarchical': False, 'K': 4, 'epsilon': 0.05, 'R1': 0, 'R2': 0}
+labmodel = labeling(model,"T-MSC", options)
+
 embed()
