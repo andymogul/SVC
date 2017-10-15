@@ -18,7 +18,7 @@ kradius
 kernel
 qpssvm
 diagker
-var_gpar
+var_gpr
 load_data
 class support model
     __init__
@@ -47,25 +47,18 @@ fsolve_R
 fsolve_R_GP
 """
 
-
 def kradius(X, model):
-    #
-    # % =========================================================
-    # %
+
     # % KRADIUS computes the squared distance between vector in kernel space
     # % and the center of support.
-    # %
-    # % Implemented by Kyu-Hwan Jung
-    # % April 26, 2010.
-    # %
-    # % * The source code is available under the GNU LESSER GENERAL PUBLIC
-    # % LICENSE, version 2.1.
+
     d = np.zeros([X.shape[1], 1])  ######################
     if model.support == 'SVDD':
         [dim, num_data] = X.shape
-        x2 = diagker(X, model['options']['ker'], model['options']['arg'])
-        Ksvx = kernel(input1=X, input2=model['sv']['X'], ker=model['options']['ker'], arg=model['options']['arg'])
-        d = x2 - 2 * np.dot(Ksvx, model['Alpha']) + model['b'] * np.ones((num_data, 1))
+        x2 = diagker(X, model.svdd_params['ker'], model.svdd_params['arg'])
+        Ksvx = kernel(input1=X, input2=model.svdd_model['sv']['X'], ker=model.svdd_params['ker'],
+                      arg=model.svdd_params['arg'])
+        d = x2 - 2 * np.dot(Ksvx, model.svdd_model['Alpha']) + model.svdd_model['b'] * np.ones((num_data, 1))
     else:  # 'GP'
         for i in range(X.shape[1]):
             # %[predict_label, accuracy] = var_gpr(X(:,i)', model.X, model.inv_C, model.hyperparams);
@@ -109,7 +102,6 @@ def kernel(input1, ker, arg, input2=None):
 
         return K
 
-
 def qpssvm(H, f, b, I):
     P = matrix(H, tc='d')
     q = matrix(f.reshape(f.shape[0], 1), tc='d')
@@ -132,25 +124,17 @@ def qpssvm(H, f, b, I):
     fval = sol['primal objective']
     return [x, fval]
 
-
 def diagker(X, ker, arg):
     diagK = np.diag(kernel(input1=X, ker=ker, arg=arg))
     diagK = diagK.reshape(diagK.shape[0], 1)
     return diagK
-
 
 def var_gpr(test, input, inv_C, hyperpara):
     # % Variance in Gaussian Process Regression used as Support Funtion of Clustering
     # %
     # % The variance function of a predictive distribution of GPR
     # % sigma^2(x) = kappa - k'C^(-1)k
-    # %==========================================================================
-    # % Implemented by H.C. Kim Jan. 16, 2006
-    # % Modified by Sujee Lee at September 10, 2014.
-    # %
-    # % * The source code is available under the GNU LESSER GENERAL PUBLIC
-    # % LICENSE, version 2.1.
-    # %==========================================================================
+
     [D, n] = input.shape
     [D, nn] = test.shape
     expX = hyperpara
@@ -168,44 +152,48 @@ def var_gpr(test, input, inv_C, hyperpara):
 
     return var
 
-def load_data(data_name):
-    data=sio.loadmat('data/'+data_name)
-    if data=='toy':
-        input=data['X']
+def load_data(data_path):
+    data = sio.loadmat(data_path)
+    if data == 'toy':
+        input = data['X']
     else:
-        input=data['input'].T
+        input = data['input'].T
     return input
-    
+
 class supportmodel:
-    def __init__(self, input, support, supportopt, hyperparams):
-        self.input=input  ### input.shape = [dim, N_sample]
+    def __init__(self, input=None, support='SVDD', hyperparams=None):
+        self.input = input  ### input.shape = [dim, N_sample]
         assert type(self.input) is np.ndarray, 'ERROR: input type must be numpy.ndarray'
-        self.support=support  ### 'SVDD' or 'GP'
-        assert self.support=='SVDD' or self.support=='GP', 'ERROR: Support must be \'SVDD\', or \'GP\''
-        if self.support=='SVDD':
+        self.support = support  ### 'SVDD' or 'GP'
+        assert self.support == 'SVDD' or self.support == 'GP', 'ERROR: Support must be \'SVDD\', or \'GP\''
+        if self.support == 'SVDD':
+            if hyperparams == None:
+                hyperparams = {'ker': 'rbf', 'arg': 1, 'solver': 'imdm', 'C': 1}
             self.svdd_normalize()
-            self.svdd_params=supportopt
+            self.svdd_params = hyperparams
             self.svdd()
-        elif self.support=='GP':
+        elif self.support == 'GP':
+            if hyperparams == None:
+                hyperparams = [100*np.ones((input.shape[0],1)), 1, 10]
             self.gp_normalize()
-            self.gp_params=hyperparams
-            assert self.gp_params[0].shape[0]==self.input.shape[0], "ERROR: invalid gp_params shape"
+            self.gp_params = hyperparams
+            assert self.gp_params[0].shape[0] == self.input.shape[0], "ERROR: invalid gp_params shape"
             self.gp()
 
     def gp_normalize(self):  ##my_normalize2
-        #% input [dim x num_data]
-        #% output [dim x num_data]
+        # % input [dim x num_data]
+        # % output [dim x num_data]
 
-        [dim, num]=self.input.shape
-        max_val = np.max(np.max(self.input)) ###############np
+        [dim, num] = self.input.shape
+        max_val = np.max(np.max(self.input))  ###############np
         min_val = np.min(np.min(self.input))
-        self.normalized_input = (self.input-np.tile(min_val,[dim,num]))/np.tile(max_val-min_val,[dim,num]) 
-        
+        self.normalized_input = (self.input - np.tile(min_val, [dim, num])) / np.tile(max_val - min_val, [dim, num])
+
     def gp(self):  ###using var_gpr
-        ## Gaussian Process Support Function for Clustering 
+        ## Gaussian Process Support Function for Clustering
         ##
         ##  Gaussian process support function which is the variance function of a
-        ##  predictive distribution of GPR : 
+        ##  predictive distribution of GPR :
         ##   sigma^2(x) = kappa - k'C^(-1)k
         ##  where covariance matrix C(i,j) is a parameterized function of x(i) and
         ##  x(j) with hyperparameters Theta, C(i,j) = C(x(i),x(j);Theta),
@@ -226,73 +214,80 @@ class supportmodel:
         ##
         ## Input:
         ##  input [dim x num_data] Input data.
-        ##  hyperparams [(num_data + 2) x 1] 
+        ##  hyperparams [(num_data + 2) x 1]
         ##
         ## Output:
         ##  model [struct] Center of the ball in the kernel feature space:
         ##   .input [dim x num_data]
         ##   .X [num_data x dim]
-        ##   .hyperparams [(num_data + 2) x 1]  
+        ##   .hyperparams [(num_data + 2) x 1]
         ##   .inside_ind [1 x num_data] : all input points are required to be used for computing
         ##   support function value.
         ##   .inv_C [num_data x num_data] : inverse of a covariance matrix C for the training inputs
-        ##   .r : support function level with which covers estimated support region 
+        ##   .r : support function level with which covers estimated support region
 
         print("---------------------------------")
         print('Step 1 : Training Support Function by GP...')
-        
+        start_time = time.time()
+
         self.inside_ind = range(self.normalized_input.shape[1])
         self.get_inv_C()
-        tmp = var_gpr(self.normalized_input, self.normalized_input, self.inv_C, self.gp_params) #######self
+        tmp = var_gpr(self.normalized_input, self.normalized_input, self.inv_C, self.gp_params)  #######self
         self.R = max(tmp)
 
+        self.training_time = time.time() - start_time
         print('Training Completed !')
-        
-        
+        print("Traning time for GP is : ", self.training_time, " sec")
+
     def get_inv_C(self):
         ## Compute inverse of a covariance matrix C
 
-        ninput=self.normalized_input
-        params=self.gp_params
-        [D,n] = ninput.shape ## dimension of input space and number of training cases
-        C = np.zeros([n,n])
+        ninput = self.normalized_input
+        params = self.gp_params
+        [D, n] = ninput.shape  ## dimension of input space and number of training cases
+        C = np.zeros([n, n])
 
-        for d in range(D):    
-            C = C + params[0][d]*(np.tile(np.reshape(ninput[d,:],[-1,1]),[1,n])-np.tile(ninput[d,:],[n,1]))**2
-        C = params[1]*np.exp(-0.5*C) + params[2]*np.eye(n)
-                    
+        for d in range(D):
+            C = C + params[0][d] * (np.tile(np.reshape(ninput[d, :], [-1, 1]), [1, n]) - np.tile(ninput[d, :],
+                                                                                                 [n, 1])) ** 2
+        C = params[1] * np.exp(-0.5 * C) + params[2] * np.eye(n)
+
         self.inv_C = inv(np.matrix(C))
 
     def svdd_normalize(self):
         Xin = self.input
         [dim, n] = Xin.shape
-    
+
         mean_by_col = np.mean(Xin, axis=1).reshape(dim, 1)
         stds_by_col = np.std(Xin, axis=1).reshape(dim, 1)
 
-        means = np.tile(mean_by_col, (1,n))
-        stds = np.tile(stds_by_col, (1,n))
+        means = np.tile(mean_by_col, (1, n))
+        stds = np.tile(stds_by_col, (1, n))
 
-        X_normal = (Xin - means)/stds
+        X_normal = (Xin - means) / stds
 
         self.normalized_input = X_normal
-        print("Normalized input : ", self.normalized_input)
-    
+        # print("Normalized input : ", self.normalized_input)
+
     def svdd(self):
         print("Step 1: Training Support Function by SVDD ...")
         start_time = time.time()
 
-        self.model = {}
-        self.model['support'] = 'SVDD'
+        model = {}
+        # self.model['support'] = 'SVDD'
         options = self.svdd_params
         if options.get('ker') == None:
             options['ker'] = 'rbf'
+            print("You need to specify kernel type with \'ker\'")
         if options.get('arg') == None:
             options['arg'] = 1
+            print("You need to specify kernel parameters with \'arg\', consistently with kernel type")
         if options.get('solver') == None:
             options['solver'] = 'imdm'
+            print("You must specify solver type with \'solver\'")
         if options.get('C') == None:
             options['C'] = 1
+            print("You must specifly svm parameter C with \'C\'")
 
         [dim, num_data] = self.normalized_input.shape
 
@@ -303,151 +298,121 @@ class supportmodel:
         b = options['C']
         I = np.arange(num_data)
         [Alpha, fval] = qpssvm(H, f, b, I)  # 아직 qpssvm에서 stat 미구현
+        # print(Alpha)
+        # inx = np.where(Alpha > pow(10, -5))[0]  # Alpha를 0이상으로 잡으면 잘못잡힘.
+        inx = (Alpha > pow(10, -5)).ravel()
+        # self.model['support_type'] = 'SVDD'
 
-        inx = np.where(Alpha > pow(10, -5))[0]  # Alpha를 0이상으로 잡으면 잘못잡힘.
-        self.model['support_type'] = 'SVDD'
-        self.model['Alpha'] = Alpha[inx]
-        self.model['sv_ind'] = np.where((Alpha > pow(10, -5)) & (Alpha < (options['C'] - pow(10, -7))))[0]
-        print(self.model['sv_ind'])
-        self.model['bsv_ind'] = np.where(Alpha >= (options['C'] - pow(10, -7)))[0]
-        self.model['inside_ind'] = np.where(Alpha < (options['C'] - pow(10, -7)))[0]
-
-        self.model['b'] = np.dot(np.dot(Alpha[inx].T, K[inx, :][:, inx]), Alpha[inx])
+        model['Alpha'] = Alpha[inx]
+        model['sv_ind'] = np.logical_and(Alpha > pow(10, -5), Alpha < (options['C'] - pow(10, -7))).ravel()
+        # print(self.model['sv_ind'])
+        model['bsv_ind'] = (Alpha >= (options['C'] - pow(10, -7))).ravel()
+        model['inside_ind'] = (Alpha < (options['C'] - pow(10, -7))).ravel()
+        # print(Alpha[inx].shape, K[inx,:][:,inx].shape)
+        model['b'] = np.dot(np.dot(Alpha[inx].T, K[inx, :][:, inx]), Alpha[inx])
 
         # setup model
-        self.model['sv'] = {}
-        self.model['sv']['X'] = self.normalized_input[:, inx]
+        model['sv'] = {}
+        model['sv']['X'] = self.normalized_input[:, inx]
 
-        self.model['sv']['inx'] = inx
-        self.model['nsv'] = len(inx)
-        self.model['options'] = options
+        model['sv']['inx'] = inx
+
+        model['nsv'] = np.count_nonzero(inx)    ## inx has elements - True or False
+
+        model['options'] = options
         #    model['stat'] = stat
-        self.model['fun'] = 'kradius'
+        model['fun'] = 'kradius'
+        self.svdd_model = model
 
-        radius = kradius(self.normalized_input[:, self.model['sv_ind']], self.model)
-
-        self.model['r'] = np.amax(radius)
+        radius = kradius(self.normalized_input[:, model['sv_ind']], self)
+        self.R = np.amax(radius)
 
         print("Training Completed!")
-        end_time = time.time()
-        print("Trading time for SVDD is : ", end_time - start_time, " sec")
+        self.training_time = time.time() - start_time
+        print("Traning time for SVDD is : ", self.training_time, " sec")
 
 class labeling:
-    def __init__(self, supportmodel, labelingmethod, options=None):
+    def __init__(self, supportmodel=None, labelingmethod='CG-SC', options=None):
         self.supportmodel = supportmodel
         self.labelingmethod = labelingmethod
         self.options = options
+        print("Step 2 : Labeling by the method " + self.labelingmethod + "...")
+        start_time = time.time()
+        self.run()
+        self.labeling_time = time.time() - start_time
+        print("Labeling Completed!")
+        print("Time for labeling is : ", self.labeling_time, " sec!")
+        print("---------------------------------")
 
     def run(self):
-        print("Step 2 : Labeling by the method "+self.labelingmethod+"...")
-        if self.labelingmethod=='CG-SC':
+        if self.labelingmethod == 'CG-SC':
             self.cgsc()
-        elif self.labelingmethod=='S-MSC':
-            self.smsc()       
-        elif self.labelingmethod=='T-MSC':
-            self.tmsc()     
-        elif self.labelingmethod=='F-MSC':
-            self.fmsc()    
-        elif self.labelingmethod=='V-MSC':
+        elif self.labelingmethod == 'S-MSC':
+            self.smsc()
+        elif self.labelingmethod == 'T-MSC':
+            self.tmsc()
+        elif self.labelingmethod == 'F-MSC':
+            self.fmsc()
+        elif self.labelingmethod == 'V-MSC':
             self.vmsc()
         else:
             print("ERROR: invalid labeling method; valid examples (CG-SC, S-MSC, T-MSC, F-MSC, V-MSC)")
-        print("Labeling Completed!")
-
 
     def findAdjMatrix(self, input):
-#%==========================================================================
-#% FindAdjMatrix: Caculating adjacency matrix
-#%
-#% Input:
-#%  X [dim x num_data] Input data.
-#%  model [struct] obtained from svdd.m 
-#%
-#% Output:
-#%  adjacent [num_data x num_data] 
-#%     1 for connected, 0 for disconnected (violated), -1 (outliers, BSV)
-#%
-#% Description
-#%	The Adjacency matrix between pairs of points whose images lie in
-#%	or on the sphere in feature space. 
-#%	(i.e. points that belongs to one of the clusters in the data space)
-#%
-#%	given a pair of data points that belong to different clusters,
-#%	any path that connects them must exit from the sphere in feature
-#%	space. Such a path contains a line segment of points y, such that:
-#%	kdist2(y,model)>model.r.
-#%	Checking the line segment is implemented by sampling a number of 
-#%   points (10 points).
-#%	
-#%	BSVs are unclassfied by this procedure, since their feature space 
-#%	images lie outside the enclosing sphere.( adjcent(bsv,others)=-1 )
-#%
-#%==========================================================================
-#% January 13, 2009
-#% Implemented by Daewon Lee
-#%
-#% * The source code is available under the GNU LESSER GENERAL PUBLIC
-#% LICENSE, version 2.1. 
-#%==========================================================================
-#
-#% samples are column vectors
         model = self.supportmodel
         N = input.shape[1]
-
-        adjacent = np.zeros([N,N])
-        if model.support == "SVDD":
-            R = model.model['r']+pow(10, -7) #% Squared radius of the minimal enclosing ball
-        else:
-            R = model.R + pow(10, -7)
-    
-        for i in range(N): ##rows
-            for j in range(N): ##columns
+        start_time = time.time()
+        adjacent = np.zeros([N, N])
+        R = model.R + 10 ** (-7)  # % Squared radius of the minimal enclosing ball
+        self.lineseg=[]
+        for i in range(N):  ##rows
+            for j in range(N):  ##columns
                 ## if the j is adjacent to i - then all j adjacent's are also adjacent to i.
                 if j == i:
-                    adjacent[i,j] = 1
+                    adjacent[i, j] = 1
                 elif j < i:
-                    if (adjacent[i,j] == 1):
-                        adjacent[i,:] = np.logical_or(adjacent[i,:],adjacent[j,:])
-                        adjacent[:,i]=adjacent[i,:]
+                    if (adjacent[i, j] == 1):
+                        adjacent[i, :] = np.logical_or(adjacent[i, :], adjacent[j, :])
+                        adjacent[:, i] = adjacent[i, :]
                 else:
                     ## if adajecancy already found - no point in checking again
-                    if (adjacent[i,j] != 1):
-                    ## goes over 10 points in the interval between these 2 Sample points                   
-                        adj_flag = 1 ## unless a point on the path exits the shpere - the points are adjacnet
-                        for interval in {0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9}:
-                            z = input[:,i] + interval * (input[:,j] - input[:,i])
-                            z = np.reshape(z,[-1,1])
-                            ## calculates the sub-point distance from the sphere's center 
+                    if (adjacent[i, j] != 1):
+                        ## goes over 10 points in the interval between these 2 Sample points
+                        adj_flag = 1  ## unless a point on the path exits the shpere - the points are adjacnet
+                        for interval in [0.5,0.6,0.4,0.7,0.3,0.8,0.2,0.9,0.1]:
+                            z = input[:, i] + interval * (input[:, j] - input[:, i])
+                            z = np.reshape(z, [-1, 1])
+                            ## calculates the sub-point distance from the sphere's center
                             d = kradius(z, model)
                             if d > R:
                                 adj_flag = 0
+                                self.lineseg.append(interval)
                                 break
                         if adj_flag == 1:
-                            adjacent[i,j] = 1
-                            adjacent[j,i] = 1
-                            
+                            adjacent[i, j] = 1
+                            adjacent[j, i] = 1
+
         self.adjacent_matrix = adjacent
-        self.symmetric = (np.max(np.abs(adjacent-adjacent.T) == 0))
+        self.symmetric = (np.max(np.abs(adjacent - adjacent.T) == 0))
+        print("time to find adjacent = ", time.time() - start_time)
 
     def cgsc(self):
-#% CGSVC Support Vector Clusteing using Complete-Graph Based Labeling Method
-#%
-#% Description:
-#%  To determine whether a pair of xi and xj is in the same contour, 
-#%  it can be used a complete-graph(CG) strategy that relies on the fact 
-#%  that any path connecting two data points in different contours must 
-#%  exit the contours in data space, which is equivalent that the image 
-#%  of the path in feature space exits the minimum enclosing sphere.
-#%  CG strategy makes adjacency matrix Aij between pairs of points 
-#%  xi and xj as follows :
-#%   A(ij) = 1 if for all y on the line segment connecting xi and xj
-#%           0 otherwise
-#%
-#% * The source code is available under the GNU LESSER GENERAL PUBLIC
-#% LICENSE, version 2.1. 
+        # % CGSVC Support Vector Clusteing using Complete-Graph Based Labeling Method
+        # %
+        # % Description:
+        # %  To determine whether a pair of xi and xj is in the same contour,
+        # %  it can be used a complete-graph(CG) strategy that relies on the fact
+        # %  that any path connecting two data points in different contours must
+        # %  exit the contours in data space, which is equivalent that the image
+        # %  of the path in feature space exits the minimum enclosing sphere.
+        # %  CG strategy makes adjacency matrix Aij between pairs of points
+        # %  xi and xj as follows :
+        # %   A(ij) = 1 if for all y on the line segment connecting xi and xj
+        # %           0 otherwise
+
         model = self.supportmodel
         self.findAdjMatrix(model.normalized_input)
-        self.cluster_label = cg.connected_components(self.adjacent_matrix)
+        self.cluster_label = cg.connected_components(self.adjacent_matrix)  # [1], cluster_lables????????
         print(self.cluster_label[1])
 
     def findSEPs(self):
@@ -458,22 +423,22 @@ class labeling:
         N_locals = []
         local_val = []
 
-        if model.model['support_type'] == 'GP':
+        if model.support == 'GP':
             for i in range(N):
-                x0 = X[i]
-                res = minimize(fun=my_R_GP1, x0=x0)
+                x0 = X[:, i]
+                res = minimize(fun=my_R_GP1, x0=x0, args=model, method="Nelder-Mead")
                 [temp, val] = [res.x, res.fun]
                 N_locals.append(temp)
                 local_val.append(val)
 
-        if model.model['support_type'] == 'SVDD':
+        else:
             for i in range(N):
-                x0 = X.T[i]
+                x0 = X[:, i]
                 if len(x0) <= 2:
-                    res = minimize(fun=my_R1, x0=x0, args=model.model, method='Nelder-Mead')
+                    res = minimize(fun=my_R1, x0=x0, args=model, method='Nelder-Mead')
                     [temp, val] = [res.x, res.fun]
                 else:
-                    res = minimize(fun=my_R1, x0=x0, method='trust-ncg')
+                    res = minimize(fun=my_R1, x0=x0, args=model, method='trust-ncg')
                     [temp, val] = [res.x, res.fun]
                 N_locals.append(temp)
                 local_val.append(val)
@@ -486,7 +451,9 @@ class labeling:
         return [N_locals, newlocal, newlocal_val, match_local]
 
     def smsc(self):
+        t1 = time.time()
         [rep_locals, locals, local_val, match_local] = self.findSEPs()
+        print("time to find SEPs = ", time.time() - t1)
         # %% Step 2 : Labeling Data for Clustering
 
         self.findAdjMatrix(locals.T)
@@ -496,14 +463,16 @@ class labeling:
         csm = cg.connected_components(self.adjacent_matrix)
         local_cluster_assignments = csm[1]
         local_cluster_assignments = np.array(local_cluster_assignments)
-        print(local_cluster_assignments[match_local])
+        print(local_cluster_assignments)
+        self.cluster_label = local_cluster_assignments[match_local]
+        print(self.cluster_label)
 
     def findTPs(self):
         locals = self.locals
         model = self.supportmodel
         epsilon = self.options['epsilon']
         R = model.R + 10 ** (-7)
-        print(self.locals)
+
         ts = {}
         ts['x'] = []
         ts['f'] = []
@@ -516,22 +485,20 @@ class labeling:
             for i in range(N):
                 for j in range(i, N):
                     for k in range(10):
-                        x0 = locals[i] + 0.1 * (k + 1) * (locals[j] - locals[i])
+                        x0 = locals[i] + 0.1 * (k+1) * (locals[j] - locals[i])
                         sep = fsolve(func=fsolve_R_GP, x0=x0, args=model, xtol=10 ** (-6))
                         tmp_x.append(sep)
             tmp_x = np.array(tmp_x)
-            [dummy, I, J] = np.unique(np.round(10 * tmp_x), axis=0, return_index=True, return_inverse=True)
+            [dummy, I, J] = np.unique(np.round(10*tmp_x),axis=0, return_index=True, return_inverse=True)
             tmp_x = tmp_x[I, :]
             for i in range(list(tmp_x.shape)[0]):
                 sep = tmp_x[i]
                 [f, g, H] = my_R_GP2(sep, model)
                 [D, V] = la.eig(H)
-
                 ind = []
                 if np.sum(D < 0) == 1:
                     sep1 = sep + epsilon * V[np.where(D < 0)]
                     sep2 = sep - epsilon * V[np.where(D < 0)]
-
                     if attr == 2:
                         res1 = minimize(fun=my_R_GP1, x0=sep1, args=model, method='Nelder-Mead')
                         [temp1, val] = [res1.x, res1.fun]
@@ -562,14 +529,12 @@ class labeling:
             tmp_x = np.array(tmp_x)
             [dummy, I, J] = np.unique(np.round(10 * tmp_x), axis=0, return_index=True, return_inverse=True)
             tmp_x = tmp_x[I, :]
-
             for i in range(list(tmp_x.shape)[0]):
                 sep = tmp_x[i]
                 [f, g, H] = my_R2(sep, model)
                 [D, V] = la.eig(H)
                 ind = []
                 if np.sum(D < 0) == 1:
-
                     sep1 = sep + epsilon * V[np.where(D < 0)]
                     sep2 = sep - epsilon * V[np.where(D < 0)]
                     if attr == 2:
@@ -644,7 +609,7 @@ class labeling:
             print("assignment:", assignment)
             print("N_clusters:", np.max(assignment) + 1)
             if np.max(assignment) == K - 1:
-                print('We can find the number of K clusters')
+                print('We can find the number of K clusters');
                 # % clstmodel update
                 self.out_ts = tmp_ts[m]
                 # % cluster assignment into entire data points
@@ -667,7 +632,7 @@ class labeling:
             self.local_ass = local_clusters_assignments
             self.cluster_labels = self.local_ass[self.match_local]
             print(self.cluster_labels)
-        
+
     def tmsc(self):
         fHierarchical = self.options['hierarchical']
 
@@ -713,7 +678,7 @@ class labeling:
         else:
             self.hierarchicalLabelTSVC()
 
-    #0915 Bumho
+
     def fmsc(self):
         self.clstmodel = {}
         self.clstmodel['options'] = self.options
@@ -907,6 +872,7 @@ class labeling:
 
         return final_label
 
+
 def my_R1(x, model):
     f = kradius(x.reshape(x.shape[0], 1), model)
     return f
@@ -933,10 +899,17 @@ def my_R2(x, model):
                                                   model.svdd_model['sv']['X'])), axis=1).T)
     H = np.array(H).T
     H = H + 4 * q * np.eye(d) * np.dot(model.svdd_model['Alpha'].reshape(model.svdd_model['Alpha'].shape[0], 1).T, K)
-    return f, g, H
+    return [f, g, H]
 
-def my_R_GP1(x, model):
+    
+
+def my_R_GP1(x, supportmodel):
+    model = supportmodel
     f = var_gpr(np.reshape(x, [-1, 1]), model.normalized_input, model.inv_C, model.gp_params)  ##full(X)
+    #    %[n d]=size(model.SVs);
+    #    %q=model.Parameters(4);
+    #    %SV=full(model.SVs);
+    #    %beta=model.sv_coef;
     return f
 
 def my_R_GP2(x, model):
@@ -958,13 +931,17 @@ def my_R_GP2(x, model):
 
     f = var_gpr(x, input, inv_K, hparam)  ##############full
 
+    #    %[n d]=size(model.SVs);
+    #    %q=model.Parameters(4);
+    #    %SV=full(model.SVs);
+    #    %beta=model.sv_coef;
     input = input.T
     x = x.reshape(1, -1)
     hparam = np.append(hparam[0], np.array(hparam[1:]).reshape(-1, 1), axis=0)
     [N, D] = input.shape
     [nn, D] = x.shape  # % nn=1
-    k = np.zeros((N, nn))
 
+    k = np.zeros((N, nn))
     for d in range(D):
         k += hparam[d][0] * np.power((ml.repmat(input[:, d].reshape(-1, 1), 1, nn) - ml.repmat(np.transpose(x[:, d]), N, 1)), 2)
     k = hparam[D] * np.exp(-0.5 * k)
@@ -973,14 +950,13 @@ def my_R_GP2(x, model):
 
     Hk = np.zeros((N, D ** 2))  # % Hessian of k. (make N * D^2 matrix)
     for j in range(D):
-        Hkj = np.multiply(gk , -hparam[j] * np.matlib.repmat((x[:, j] - input[:, j]), D, 1).T ) # % x(:,j)-input(:,j) : scalar - vector
+        Hkj = np.multiply(gk , -hparam[j] * ml.repmat((x[:, j] - input[:, j]), D, 1).T ) # % x(:,j)-input(:,j) : scalar - vector
         Hkj[:, j] = Hkj[:, j] - hparam[j] * k.reshape(1, -1)
         Hk[:, j * D:(j + 1) * D] = Hkj  #####################index
     H1 = np.matmul(np.matmul(Hk.T, inv_K), k)  # % D^2 * 1
     H1 = np.reshape(H1, [D, D])  # % D * D
     H2 = np.matmul(np.matmul(gk.T, inv_K), gk)  # % D * D
     H = -2 * (H1 + H2)
-    # %         H= hessian(@(xx)var_gpr(xx,model.X,model.inv_C,model.hyperparams),x); %%
     return f, g, H
 
 def fsolve_R(x, model):
@@ -993,18 +969,7 @@ def fsolve_R(x, model):
 
     F = 4 * q * np.dot(np.transpose(model.svdd_model['Alpha']),
                        np.multiply(ml.repmat(K, 1, d), ml.repmat(x, n, 1) - np.transpose(model.svdd_model['sv']['X'])))
-
-    # if nargout >1:
-    #    const = np.multiply(np.transpose(model['Alpha']),K)
-    #    J = []
-    #    for i in range(d):
-    #    for i in range(d):
-    #        J=[J-8*q**2*np.sum(np.multiply(np.transpose(ml.repmat(np.transpose(const),d,1))),ml.repmat(x[i],d,n)-np.multiply(np.transpose(ml.repmat(model['sv']['X'][i,:],d,1)),ml.repmat(np.transpose(x),1,n)-model['sv']['X']),1)]
-
-    #   J = J + 4*q*np.multiply(np.multiply(np.eye(d), np.transpose(model['Alpha'])), K)
-
     return F[0]
-
 
 def fsolve_R_GP(x, model):
     input = model.normalized_input.T
@@ -1015,22 +980,13 @@ def fsolve_R_GP(x, model):
     [nn, D] = x.shape
 
     inv_K = model.inv_C
-
-
     hparam = np.append(hparam[0], np.array(hparam[1:]).reshape(-1,1), axis=0)
 
     k = np.zeros((N, nn))
     for d in range(D):
-
         k += hparam[d][0] * np.power((ml.repmat(input[:, d].reshape(-1, 1), 1, nn)-ml.repmat(np.transpose(x[:, d]), N, 1)), 2)
     k = hparam[D] * np.exp(-0.5 * k)
-
     gk = -np.multiply(np.multiply(ml.repmat(k, 1, D), ml.repmat(np.transpose(hparam[0:D]), N, 1)),
                       ml.repmat(x, N, 1) - input)
     g = -2 * np.dot(np.dot(np.transpose(gk),inv_K), k)
-
     return g.ravel()
-
-                                   
-
-
