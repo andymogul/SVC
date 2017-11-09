@@ -980,8 +980,7 @@ def fsolve_R_GP(x, model):
     [nn, D] = x.shape
 
     inv_K = model.inv_C
-    hparam = np.append(hparam[0], np.array(hparam[1:]).reshape(-1,1), axis=0)
-
+    hparam = np.append(hparam[0], np.array(hparam[1:]).reshape(-1,1), axis=0
     k = np.zeros((N, nn))
     for d in range(D):
         k += hparam[d][0] * np.power((ml.repmat(input[:, d].reshape(-1, 1), 1, nn)-ml.repmat(np.transpose(x[:, d]), N, 1)), 2)
